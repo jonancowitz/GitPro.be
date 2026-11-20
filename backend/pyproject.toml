@@ -8,6 +8,7 @@ dependencies = [
     "asyncpg>=0.30",
     "fastapi>=0.115",
     "httpx>=0.27",
+    "ijson>=3.2",
     "pydantic>=2,<3",
     "pydantic-settings>=2,<3",
     "redis>=5.2",
@@ -26,6 +27,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[project.scripts]
+sync-scryfall = "app.workers.sync_scryfall:main"
+sync-stores = "app.workers.sync_stores:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
