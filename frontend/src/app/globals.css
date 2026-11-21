@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+:root {
+  --background: #090c10;
+  --foreground: #e8eef6;
+  --surface: #121820;
+  --surface-raised: #1a2330;
+  --line: #2c3a4a;
+  --muted: #8ea0b5;
+  --accent: #ff6a3d;
+  --accent-ink: #2a1008;
+  --good: #3dbe86;
+  --warn: #f0b429;
+  --danger: #ff6d7a;
+  --paper: #f4f7fb;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-raised);
+  --color-line: var(--line);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-paper: var(--paper);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background:
+    radial-gradient(900px 420px at 0% -10%, rgba(255, 106, 61, 0.14), transparent 55%),
+    var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), sans-serif;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
