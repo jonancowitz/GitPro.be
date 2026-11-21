@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import models as models
+from app.api.routes.deck import router as deck_router
 from app.api.routes.health import router as health_router
 
 app = FastAPI(title="gitpro.be", version="0.1.0")
@@ -16,5 +17,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(health_router)
+app.include_router(deck_router)
 
 __all__ = ["app", "models"]
