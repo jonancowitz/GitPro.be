@@ -24,10 +24,7 @@ PRICE_BATCH_SIZE = 500
 
 
 class StoreAdapter(ABC):
-    """Pull one store's public price snapshot into ``store_prices``.
-
-    Live cart verification and checkout URLs belong to later milestones.
-    """
+    """Pull one store's public price snapshot into ``store_prices``."""
 
     store_id: str
     feed_url: str

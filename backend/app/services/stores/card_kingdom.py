@@ -1,15 +1,18 @@
-"""Card Kingdom public pricelist sync."""
+"""Card Kingdom public pricelist sync and checkout handoff."""
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
+from urllib.parse import urlencode
 
 from app.services.stores.base import PriceRow, StoreAdapter
 
 PRICELIST_URL = "https://api.cardkingdom.com/api/v2/pricelist"
+BUILDER_URL = "https://www.cardkingdom.com/builder"
 USER_AGENT = "gitpro.be/1.0"
 
 # Card Kingdom grades mapped onto the blueprint's normalized conditions.
@@ -134,6 +137,15 @@ def ck_price_rows(item: dict[str, Any], updated_at: datetime) -> list[PriceRow]:
         )
     )
     return rows
+
+
+def card_kingdom_checkout_url(lines: Sequence[str], affiliate_tag: str | None) -> str:
+    """Mass-entry builder URL. ``lines`` use the same text as the copy fallback."""
+
+    params = {"c": "||".join(lines)}
+    if affiliate_tag:
+        params["partner"] = affiliate_tag
+    return f"{BUILDER_URL}?{urlencode(params)}"
 
 
 class CardKingdomAdapter(StoreAdapter):
