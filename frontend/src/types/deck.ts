@@ -5,13 +5,14 @@ export type MinCondition = "NM" | "LP" | "MP";
 export type FinishMode = "cheapest" | "match_deck";
 export type UnmatchedReason = "unmatched" | "out_of_stock";
 export type PriceSource = "snapshot" | "live";
-export type StoreId = "card_kingdom" | "mana_pool";
+export type StoreId = "card_kingdom" | "mana_pool" | "card_trader";
 
-export const STORE_IDS = ["card_kingdom", "mana_pool"] as const satisfies readonly StoreId[];
+export const STORE_IDS = ["card_kingdom", "mana_pool", "card_trader"] as const satisfies readonly StoreId[];
 
 export const STORE_LABELS: Record<StoreId, string> = {
   card_kingdom: "Card Kingdom",
   mana_pool: "Mana Pool",
+  card_trader: "CardTrader Zero",
 };
 
 export const MIN_CONDITIONS = ["NM", "LP", "MP"] as const satisfies readonly MinCondition[];
@@ -121,6 +122,6 @@ export const DEFAULT_SETTINGS: OptimizerSettings = {
   min_condition: "LP",
   finish_mode: "cheapest",
   exclude_basic_lands: true,
-  enabled_stores: ["card_kingdom", "mana_pool"],
+  enabled_stores: ["card_kingdom", "mana_pool", "card_trader"],
   package_penalty_cents: 300,
 };

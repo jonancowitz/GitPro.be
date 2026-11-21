@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     manapool_email: str = ""
     manapool_affiliate_tag: str = ""
     cardkingdom_affiliate_tag: str = ""
+    cardtrader_api_token: str = ""
     next_public_api_base_url: str = "http://localhost:8000"
 
 

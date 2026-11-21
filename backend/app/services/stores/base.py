@@ -109,8 +109,8 @@ async def upsert_price_rows(session: AsyncSession, rows: list[PriceRow]) -> int:
     return len(storable)
 
 
-def build_store_seed_upsert():
-    statement = pg_insert(Store).values(SEED_STORES)
+def build_store_seed_upsert(rows: list[dict[str, Any]] | None = None):
+    statement = pg_insert(Store).values(SEED_STORES if rows is None else rows)
     excluded = statement.excluded
     return statement.on_conflict_do_update(
         index_elements=["id"],
