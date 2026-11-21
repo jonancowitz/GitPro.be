@@ -5,6 +5,10 @@ is a binary choice that is legal only when a store's merchandise subtotal
 reaches its threshold. A small per-line weight on cheap peer-to-peer singles
 is part of the objective only; it is not added to the price shown to the buyer
 and it does not count toward a free-shipping threshold.
+
+CardTrader Zero has no flat fee. Its US rate is a weight step on card count,
+with a value cap on the plain-envelope step. Those steps are extra binaries
+for that store only. The coverage constraints are unchanged.
 """
 
 from __future__ import annotations
@@ -39,6 +43,13 @@ from app.services.catalog import (
     select_candidates,
 )
 from app.services.stores.card_kingdom import card_kingdom_checkout_url
+from app.services.stores.card_trader import (
+    CARD_TRADER_STORE_ID,
+    CARD_TRADER_US_SHIPPING_STEPS,
+    ShippingStep,
+    card_trader_checkout_url,
+    shipping_cents_for_steps,
+)
 from app.services.stores.mana_pool import (
     TIMEOUT_NOTICE,
     UNAVAILABLE_NOTICE,
@@ -73,6 +84,7 @@ class StoreTerms:
     base_shipping_cents: int
     free_shipping_threshold_cents: int | None
     affiliate_param: str | None = None
+    shipping_steps: tuple[ShippingStep, ...] | None = None
 
 
 def plan_purchase(
@@ -148,6 +160,7 @@ def solve_assignment(
     Variables are ``x[line, store]``, ``y[store]``, and ``z[store]``. The
     objective is line cost plus base shipping on active stores that do not
     qualify for free shipping, plus the package penalty on every active store.
+    CardTrader Zero adds one binary per weight step instead of that flat fee.
     """
 
     card_count = len(lines)
@@ -170,8 +183,10 @@ def solve_assignment(
         if not available[card_index].any():
             raise OptimizeError("no_offer", "A selected card has no store offer.")
 
+    resolved_steps = [shipping_steps_for(store) for store in stores]
     x_count = card_count * store_count
-    variable_count = x_count + store_count + store_count
+    step_total = sum(len(steps) for steps in resolved_steps if steps)
+    variable_count = x_count + store_count + store_count + step_total
     objective = np.zeros(variable_count, dtype=float)
     lower = np.zeros(variable_count, dtype=float)
     upper = np.zeros(variable_count, dtype=float)
@@ -185,9 +200,12 @@ def solve_assignment(
     for store_index, store in enumerate(stores):
         active = x_count + store_index
         free = x_count + store_count + store_index
-        objective[active] = store.base_shipping_cents + package_penalty_cents
+        if resolved_steps[store_index]:
+            objective[active] = package_penalty_cents
+        else:
+            objective[active] = store.base_shipping_cents + package_penalty_cents
         upper[active] = 1
-        if store.free_shipping_threshold_cents is None:
+        if resolved_steps[store_index] or store.free_shipping_threshold_cents is None:
             continue
         upper[free] = 1
         objective[free] = -store.base_shipping_cents
@@ -216,7 +234,7 @@ def solve_assignment(
 
     for store_index, store in enumerate(stores):
         threshold = store.free_shipping_threshold_cents
-        if threshold is None:
+        if threshold is None or resolved_steps[store_index]:
             continue
         free = x_count + store_count + store_index
         active_row = np.zeros(variable_count, dtype=float)
@@ -229,6 +247,17 @@ def solve_assignment(
         threshold_row[free] = -threshold
         add_row(threshold_row, 0, np.inf)
 
+    _add_shipping_step_constraints(
+        add_row,
+        variable_count,
+        x_count,
+        lines,
+        merchandise,
+        resolved_steps,
+        objective,
+        upper,
+    )
+
     result = milp(
         objective,
         integrality=np.ones(variable_count, dtype=np.int64),
@@ -238,7 +267,7 @@ def solve_assignment(
             np.asarray(lower_bounds, dtype=float),
             np.asarray(upper_bounds, dtype=float),
         ),
-        options={"disp": False, "time_limit": 1.0, "mip_rel_gap": 0.0},
+        options={"disp": False, "time_limit": 5.0 if step_total else 1.0, "mip_rel_gap": 0.0},
     )
     if not result.success or result.x is None:
         raise OptimizeError(
@@ -270,7 +299,77 @@ def _p2p_weight(store: StoreTerms, line_cents: int) -> int:
     return 0
 
 
-def shipping_for(store: StoreTerms, subtotal_cents: int) -> tuple[int, int | None]:
+def shipping_steps_for(store: StoreTerms) -> tuple[ShippingStep, ...] | None:
+    """Weight steps for this store. CardTrader Zero uses the US Zero table."""
+
+    if store.shipping_steps is not None:
+        return store.shipping_steps or None
+    if store.store_id == CARD_TRADER_STORE_ID:
+        return CARD_TRADER_US_SHIPPING_STEPS
+    return None
+
+
+def _add_shipping_step_constraints(
+    add_row,
+    variable_count: int,
+    x_count: int,
+    lines: Sequence[SelectedLine],
+    merchandise: np.ndarray,
+    resolved_steps: Sequence[tuple[ShippingStep, ...] | None],
+    objective: np.ndarray,
+    upper: np.ndarray,
+) -> None:
+    """Pay exactly one feasible weight step when a stepped store is used.
+
+    Coverage rows are left alone. A step is feasible when the assigned card
+    count is within its cap and, for the envelope, the merchandise value is too.
+    """
+
+    store_count = len(resolved_steps)
+    card_count = len(lines)
+    total_cards = float(sum(line.quantity for line in lines))
+    cursor = x_count + store_count + store_count
+    for store_index, steps in enumerate(resolved_steps):
+        if not steps:
+            continue
+        slots: list[int] = []
+        for step in steps:
+            objective[cursor] = step.shipping_cents
+            upper[cursor] = 1
+            slots.append(cursor)
+            cursor += 1
+        choice = np.zeros(variable_count, dtype=float)
+        for slot in slots:
+            choice[slot] = 1
+        choice[x_count + store_index] = -1
+        add_row(choice, 0, 0)
+        column_value = float(sum(merchandise[card_index, store_index] for card_index in range(card_count)))
+        for step, slot in zip(steps, slots, strict=True):
+            card_row = np.zeros(variable_count, dtype=float)
+            for card_index, line in enumerate(lines):
+                card_row[card_index * store_count + store_index] = line.quantity
+            card_row[slot] = total_cards
+            add_row(card_row, -np.inf, step.max_cards + total_cards)
+            if step.max_subtotal_cents is None:
+                continue
+            value_row = np.zeros(variable_count, dtype=float)
+            for card_index in range(card_count):
+                value_row[card_index * store_count + store_index] = merchandise[card_index, store_index]
+            value_row[slot] = column_value
+            add_row(value_row, -np.inf, step.max_subtotal_cents + column_value)
+
+
+def shipping_for(
+    store: StoreTerms,
+    subtotal_cents: int,
+    *,
+    card_count: int = 0,
+) -> tuple[int, int | None]:
+    steps = shipping_steps_for(store)
+    if steps:
+        if card_count <= 0:
+            return 0, None
+        return shipping_cents_for_steps(steps, card_count, subtotal_cents), None
     threshold = store.free_shipping_threshold_cents
     if threshold is None:
         return store.base_shipping_cents, None
@@ -295,7 +394,8 @@ def _buckets(
         if not cards:
             continue
         subtotal = sum(card.line_total_cents for card in cards)
-        shipping, delta = shipping_for(store, subtotal)
+        card_count = sum(card.quantity for card in cards)
+        shipping, delta = shipping_for(store, subtotal, card_count=card_count)
         text_lines = [_mass_entry_line(card) for card in cards]
         buckets.append(
             StoreBucket(
@@ -346,6 +446,8 @@ def _checkout_url(store: StoreTerms, lines: Sequence[str], affiliate_tags: dict[
         return card_kingdom_checkout_url(lines, tag)
     if store.store_id == MANA_POOL_STORE_ID:
         return mana_pool_checkout_url(tag)
+    if store.store_id == CARD_TRADER_STORE_ID:
+        return card_trader_checkout_url()
     return ""
 
 
@@ -364,14 +466,16 @@ def _baseline(lines: Sequence[SelectedLine], stores: Sequence[StoreTerms]) -> tu
         if any(store.store_id not in line.offers for line in lines):
             continue
         subtotal = sum(line.offers[store.store_id].unit_price_cents * line.quantity for line in lines)
-        shipping, _delta = shipping_for(store, subtotal)
+        card_count = sum(line.quantity for line in lines)
+        shipping, _delta = shipping_for(store, subtotal, card_count=card_count)
         preference = 0 if store.store_id == "card_kingdom" else 1
         candidates.append((subtotal + shipping, preference, store.store_id, store))
     if not candidates:
         return None
     _total, _preference, _store_id, store = min(candidates)
     subtotal = sum(line.offers[store.store_id].unit_price_cents * line.quantity for line in lines)
-    shipping, _delta = shipping_for(store, subtotal)
+    card_count = sum(line.quantity for line in lines)
+    shipping, _delta = shipping_for(store, subtotal, card_count=card_count)
     return store, subtotal + shipping
 
 
@@ -565,6 +669,7 @@ async def load_store_terms(session: AsyncSession, store_ids: Sequence[str]) -> l
                 base_shipping_cents=row.base_shipping_cents,
                 free_shipping_threshold_cents=row.free_shipping_threshold_cents,
                 affiliate_param=row.affiliate_param,
+                shipping_steps=CARD_TRADER_US_SHIPPING_STEPS if row.id == CARD_TRADER_STORE_ID else None,
             )
         )
     return terms
