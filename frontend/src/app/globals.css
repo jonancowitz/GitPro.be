@@ -7,8 +7,8 @@
   --surface-raised: #1a2330;
   --line: #2c3a4a;
   --muted: #8ea0b5;
-  --accent: #ff6a3d;
-  --accent-ink: #2a1008;
+  --accent: #2f6fed;
+  --accent-ink: #ffffff;
   --good: #3dbe86;
   --warn: #f0b429;
   --danger: #ff6d7a;
@@ -35,7 +35,7 @@
 
 body {
   background:
-    radial-gradient(900px 420px at 0% -10%, rgba(255, 106, 61, 0.14), transparent 55%),
+    radial-gradient(900px 420px at 0% -10%, rgba(47, 111, 237, 0.14), transparent 55%),
     var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), sans-serif;
