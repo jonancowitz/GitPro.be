@@ -136,6 +136,7 @@ def assemble_plan(
             savings=_savings(0, None),
             unmatched=unmatched,
             notices=[],
+            alternatives=[],
         )
 
     assignment = solve_assignment(lines, stores, package_penalty_cents)
@@ -147,6 +148,7 @@ def assemble_plan(
         savings=_savings(optimized, baseline),
         unmatched=unmatched,
         notices=[],
+        alternatives=_single_store_alternatives(lines, stores, affiliate_tags),
     )
 
 
@@ -477,6 +479,31 @@ def _baseline(lines: Sequence[SelectedLine], stores: Sequence[StoreTerms]) -> tu
     card_count = sum(line.quantity for line in lines)
     shipping, _delta = shipping_for(store, subtotal, card_count=card_count)
     return store, subtotal + shipping
+
+
+def _single_store_alternatives(
+    lines: Sequence[SelectedLine],
+    stores: Sequence[StoreTerms],
+    affiliate_tags: dict[str, str],
+) -> list[StoreBucket]:
+    """Price buying the whole list at each store that can fill every line.
+
+    The baseline comparison already ranks these landed totals and keeps the
+    cheapest. The buckets themselves are what the results pane shows beside
+    the winning split.
+    """
+
+    priced: list[tuple[int, int, StoreBucket]] = []
+    for index, store in enumerate(stores):
+        if any(store.store_id not in line.offers for line in lines):
+            continue
+        buckets = _buckets(lines, [store.store_id] * len(lines), stores, affiliate_tags)
+        if len(buckets) != 1:
+            continue
+        bucket = buckets[0]
+        priced.append((bucket.subtotal_cents + bucket.shipping_cents, index, bucket))
+    priced.sort(key=lambda item: (item[0], item[1]))
+    return [bucket for _total, _index, bucket in priced]
 
 
 def _cash_total(buckets: Sequence[StoreBucket]) -> int:

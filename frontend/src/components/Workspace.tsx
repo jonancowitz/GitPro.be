@@ -126,12 +126,16 @@ export function Workspace() {
         <TriageGrid
           items={items}
           excludeBasics={settings.exclude_basic_lands}
+          enabledStores={settings.enabled_stores}
           onToggleLock={(index) => {
             mapWorkspaceItems((current) =>
               current.map((item, itemIndex) =>
                 itemIndex === index && item.scryfall_id ? { ...item, printing_locked: !item.printing_locked } : item,
               ),
             );
+          }}
+          onReplaceItem={(index, next) => {
+            mapWorkspaceItems((current) => current.map((item, itemIndex) => (itemIndex === index ? next : item)));
           }}
         />
         <ResultsDashboard result={result} optimizing={optimizing} error={optimizeError} stale={stale} />

@@ -192,6 +192,108 @@ def test_free_shipping_threshold_pulls_cards_into_one_store() -> None:
     assert _bucket(split, "bulk").shipping_cents == 0
 
 
+def test_alternatives_price_each_complete_store() -> None:
+    kingdom = _store("card_kingdom", "Card Kingdom", shipping=200, threshold=None)
+    pool = _store("mana_pool", "Mana Pool", shipping=0, threshold=None)
+    trader = _store("bulk", "Bulk Shop", shipping=0, threshold=None)
+    facts = [
+        _fact(PRINT_A, ORACLE, "Sol Ring"),
+        _fact(OTHER_PRINT, OTHER_ORACLE, "Lightning Bolt", set_code="lea", collector_number="161"),
+    ]
+    rows = [
+        _row("card_kingdom", PRINT_A, ORACLE, 300, 2),
+        _row(
+            "card_kingdom",
+            OTHER_PRINT,
+            OTHER_ORACLE,
+            100,
+            2,
+            name="Lightning Bolt",
+            set_code="lea",
+            collector_number="161",
+        ),
+        _row("mana_pool", PRINT_B, ORACLE, 50, 2, set_code="cmm", collector_number="398"),
+        _row(
+            "mana_pool",
+            OTHER_PRINT,
+            OTHER_ORACLE,
+            40,
+            2,
+            name="Lightning Bolt",
+            set_code="lea",
+            collector_number="161",
+        ),
+        _row("bulk", PRINT_A, ORACLE, 10, 0),
+    ]
+    response = plan_purchase(
+        [_item(ORACLE, PRINT_A), _item(OTHER_ORACLE, OTHER_PRINT)],
+        facts,
+        rows,
+        [kingdom, pool, trader],
+        package_penalty_cents=0,
+    )
+
+    assert [bucket.store_id for bucket in response.buckets] == ["mana_pool"]
+    assert [bucket.store_id for bucket in response.alternatives] == ["mana_pool", "card_kingdom"]
+    assert "bulk" not in {bucket.store_id for bucket in response.alternatives}
+    pool_plan, kingdom_plan = response.alternatives
+    assert pool_plan.subtotal_cents == 90
+    assert pool_plan.shipping_cents == 0
+    assert pool_plan.cards[0].set_code == "cmm"
+    assert pool_plan.cards[0].unit_price_cents == 50
+    assert kingdom_plan.subtotal_cents == 400
+    assert kingdom_plan.shipping_cents == 200
+    assert kingdom_plan.cards[0].set_code == "ltc"
+    assert kingdom_plan.cards[0].unit_price_cents == 300
+
+
+def test_split_keeps_each_single_store_alternative() -> None:
+    kingdom = _store("card_kingdom", "Card Kingdom", shipping=0, threshold=None)
+    pool = _store("mana_pool", "Mana Pool", shipping=0, threshold=None)
+    facts = [
+        _fact(PRINT_A, ORACLE, "Sol Ring"),
+        _fact(OTHER_PRINT, OTHER_ORACLE, "Lightning Bolt", set_code="lea", collector_number="161"),
+    ]
+    rows = [
+        _row("card_kingdom", PRINT_A, ORACLE, 100, 2),
+        _row(
+            "card_kingdom",
+            OTHER_PRINT,
+            OTHER_ORACLE,
+            500,
+            2,
+            name="Lightning Bolt",
+            set_code="lea",
+            collector_number="161",
+        ),
+        _row("mana_pool", PRINT_B, ORACLE, 500, 2, set_code="cmm", collector_number="398"),
+        _row(
+            "mana_pool",
+            OTHER_PRINT,
+            OTHER_ORACLE,
+            100,
+            2,
+            name="Lightning Bolt",
+            set_code="lea",
+            collector_number="161",
+        ),
+    ]
+    response = plan_purchase(
+        [_item(ORACLE, PRINT_A), _item(OTHER_ORACLE, OTHER_PRINT)],
+        facts,
+        rows,
+        [kingdom, pool],
+        package_penalty_cents=0,
+    )
+
+    assert {bucket.store_id for bucket in response.buckets} == {"card_kingdom", "mana_pool"}
+    assert response.savings.optimized_total_cents == 200
+    assert [bucket.store_id for bucket in response.alternatives] == ["card_kingdom", "mana_pool"]
+    assert [bucket.subtotal_cents + bucket.shipping_cents for bucket in response.alternatives] == [600, 600]
+    assert response.alternatives[1].cards[0].set_code == "cmm"
+    assert response.alternatives[1].cards[0].unit_price_cents == 500
+
+
 def test_free_shipping_is_not_granted_below_the_threshold() -> None:
     kingdom = _store("card_kingdom", "Card Kingdom", shipping=500, threshold=1000)
     response = plan_purchase(
@@ -860,6 +962,9 @@ def test_optimize_route_returns_a_bucket(monkeypatch: pytest.MonkeyPatch) -> Non
     assert body["buckets"][0]["mass_entry_text"] == "1 Sol Ring (LTC) 284"
     assert body["unmatched"] == []
     assert body["savings"]["optimized_total_cents"] == 125
+    assert body["alternatives"][0]["store_id"] == "card_kingdom"
+    assert body["alternatives"][0]["subtotal_cents"] == 125
+    assert body["alternatives"][0]["shipping_cents"] == 0
 
 
 class _FakeRedis:

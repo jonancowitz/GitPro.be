@@ -106,3 +106,10 @@ class OptimizeResponse(BaseModel):
     savings: SavingsSummary
     unmatched: list[UnmatchedCard]
     notices: list[str]
+    alternatives: list[StoreBucket] = Field(
+        default_factory=list,
+        description=(
+            "Complete single-store purchases, cheapest landed cost first. "
+            "A store that cannot fill every line is omitted."
+        ),
+    )

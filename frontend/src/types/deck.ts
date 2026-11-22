@@ -116,6 +116,35 @@ export interface OptimizeResponse {
   savings: SavingsSummary;
   unmatched: UnmatchedCard[];
   notices: string[];
+  alternatives: StoreBucket[];
+}
+
+export interface VendorMedian {
+  store_id: string;
+  store_name: string;
+  median_cents: number | null;
+}
+
+export interface FinishPrices {
+  finish: "nonfoil" | "foil";
+  vendors: VendorMedian[];
+}
+
+export interface CardPrinting {
+  scryfall_id: string;
+  oracle_id: string;
+  name: string;
+  set_code: string;
+  collector_number: string;
+  image_uri: string | null;
+  finishes: string[];
+  prices: FinishPrices[];
+}
+
+export interface PrintingsResponse {
+  oracle_id: string;
+  name: string;
+  printings: CardPrinting[];
 }
 
 export const DEFAULT_SETTINGS: OptimizerSettings = {

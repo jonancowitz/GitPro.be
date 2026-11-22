@@ -1,7 +1,7 @@
 import { StoreBucketCard } from "@/components/StoreBucketCard";
 import { panelClass } from "@/components/ui";
 import { formatCents } from "@/lib/format";
-import type { OptimizeResponse, UnmatchedCard } from "@/types/deck";
+import type { OptimizeResponse, StoreBucket, UnmatchedCard } from "@/types/deck";
 
 interface ResultsDashboardProps {
   result: OptimizeResponse | null;
@@ -10,13 +10,21 @@ interface ResultsDashboardProps {
   stale: boolean;
 }
 
+interface SplitColumn {
+  key: string;
+  title: string;
+  winner: boolean;
+  totalCents: number;
+  buckets: StoreBucket[];
+}
+
 export function ResultsDashboard({ result, optimizing, error, stale }: ResultsDashboardProps) {
   if (!result && !optimizing && !error) {
     return (
       <section aria-label="Optimization results" className={`${panelClass} min-w-0 border-dashed`}>
         <h2 className="text-sm font-semibold text-paper">Results</h2>
         <p className="mt-3 text-sm text-muted">
-          Run the optimizer to compare an optimized split with buying the deck from one store.
+          Run the optimizer to compare the winning split with buying the deck at each store.
         </p>
       </section>
     );
@@ -53,16 +61,59 @@ export function ResultsDashboard({ result, optimizing, error, stale }: ResultsDa
           {result.buckets.length === 0 ? (
             <p className={`${panelClass} text-sm text-muted`}>No store could fill this list with the current settings.</p>
           ) : (
-            <div className="grid gap-4">
-              {result.buckets.map((bucket) => (
-                <StoreBucketCard key={bucket.store_id} bucket={bucket} />
-              ))}
-            </div>
+            <SplitColumns result={result} />
           )}
           <UnmatchedTray cards={result.unmatched} />
         </>
       ) : null}
     </section>
+  );
+}
+
+function SplitColumns({ result }: { result: OptimizeResponse }) {
+  const columns = buildSplitColumns(result);
+  const winnerTotal = columns.find((column) => column.winner)?.totalCents ?? result.savings.optimized_total_cents;
+
+  return (
+    <div className="min-w-0 overflow-x-auto pb-1" aria-label="Candidate store splits">
+      <div className="flex w-max min-w-full items-start gap-4">
+        {columns.map((column) => {
+          const delta = column.totalCents - winnerTotal;
+          return (
+            <div
+              key={column.key}
+              className={`w-[min(24rem,85vw)] shrink-0 rounded-2xl border-2 p-3 ${
+                column.winner ? "border-accent bg-accent/10" : "border-line"
+              }`}
+              aria-label={`${column.winner ? "Winning split, " : ""}${column.title}, ${formatCents(column.totalCents)}`}
+            >
+              <div className="mb-3 flex items-start justify-between gap-3 px-1">
+                <div>
+                  <p className={`text-[11px] font-semibold uppercase tracking-[0.14em] ${column.winner ? "text-accent" : "text-muted"}`}>
+                    {column.winner ? "Best split" : "Buy at one store"}
+                  </p>
+                  <h3 className="mt-1 text-base font-semibold text-paper">{column.title}</h3>
+                  {column.winner ? null : <p className="mt-1 text-xs text-muted">{deltaLabel(delta)}</p>}
+                </div>
+                <div className="text-right">
+                  {column.winner ? (
+                    <span className="rounded-full bg-accent px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-accent-ink">
+                      Best
+                    </span>
+                  ) : null}
+                  <p className="mt-1 font-mono text-2xl text-paper">{formatCents(column.totalCents)}</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {column.buckets.map((bucket) => (
+                  <StoreBucketCard key={bucket.store_id} bucket={bucket} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -109,4 +160,57 @@ function UnmatchedTray({ cards }: { cards: UnmatchedCard[] }) {
       )}
     </section>
   );
+}
+
+function buildSplitColumns(result: OptimizeResponse): SplitColumn[] {
+  const alternatives = result.alternatives ?? [];
+  const optimizedTotal = result.savings.optimized_total_cents;
+  const winnerIds = result.buckets.map((bucket) => bucket.store_id);
+  const singleWinner = winnerIds.length === 1 ? winnerIds[0] : null;
+
+  if (singleWinner !== null) {
+    const columns: SplitColumn[] = alternatives.map((bucket) => {
+      const winner = bucket.store_id === singleWinner;
+      return {
+        key: bucket.store_id,
+        title: bucket.store_name,
+        winner,
+        totalCents: winner ? optimizedTotal : bucket.subtotal_cents + bucket.shipping_cents,
+        buckets: winner ? result.buckets : [bucket],
+      };
+    });
+    if (!columns.some((column) => column.winner)) {
+      columns.unshift({
+        key: "optimized",
+        title: result.buckets[0]?.store_name ?? "Optimized split",
+        winner: true,
+        totalCents: optimizedTotal,
+        buckets: result.buckets,
+      });
+    }
+    return [...columns.filter((column) => column.winner), ...columns.filter((column) => !column.winner)];
+  }
+
+  return [
+    {
+      key: "optimized",
+      title: "Optimized split",
+      winner: true,
+      totalCents: optimizedTotal,
+      buckets: result.buckets,
+    },
+    ...alternatives.map((bucket) => ({
+      key: bucket.store_id,
+      title: bucket.store_name,
+      winner: false,
+      totalCents: bucket.subtotal_cents + bucket.shipping_cents,
+      buckets: [bucket],
+    })),
+  ];
+}
+
+function deltaLabel(delta: number): string {
+  if (delta === 0) return "Same total";
+  if (delta > 0) return `${formatCents(delta)} more`;
+  return `${formatCents(Math.abs(delta))} less`;
 }

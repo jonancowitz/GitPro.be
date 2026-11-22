@@ -1,20 +1,26 @@
 "use client";
 
 import { Lock, LockOpen } from "lucide-react";
+import { useState } from "react";
 
 import { CardName } from "@/components/CardName";
+import { PrintingPicker } from "@/components/PrintingPicker";
 import { panelClass } from "@/components/ui";
-import type { ParsedDeckItem } from "@/types/deck";
+import type { ParsedDeckItem, StoreId } from "@/types/deck";
 
 interface TriageGridProps {
   items: ParsedDeckItem[];
   excludeBasics: boolean;
+  enabledStores: StoreId[];
   onToggleLock: (index: number) => void;
+  onReplaceItem: (index: number, item: ParsedDeckItem) => void;
 }
 
-export function TriageGrid({ items, excludeBasics, onToggleLock }: TriageGridProps) {
+export function TriageGrid({ items, excludeBasics, enabledStores, onToggleLock, onReplaceItem }: TriageGridProps) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
   const unmatched = items.filter((item) => item.match_status !== "matched").length;
   const copies = items.reduce((sum, item) => sum + item.quantity, 0);
+  const openItem = openIndex === null ? null : (items[openIndex] ?? null);
 
   return (
     <section aria-label="Deck triage" className={`${panelClass} min-w-0`}>
@@ -43,11 +49,33 @@ export function TriageGrid({ items, excludeBasics, onToggleLock }: TriageGridPro
               {items.map((item, index) => {
                 const excluded = excludeBasics && item.is_basic_land;
                 const canLock = item.scryfall_id !== null;
+                const canChoose = item.oracle_id !== null;
                 return (
-                  <tr key={`${item.raw_line}-${index}`} className={`border-t border-line ${excluded ? "opacity-50" : ""}`}>
+                  <tr
+                    key={`${item.raw_line}-${index}`}
+                    className={`border-t border-line ${excluded ? "opacity-50" : ""} ${canChoose ? "cursor-pointer hover:bg-white/[0.03]" : ""}`}
+                    onClick={() => {
+                      if (canChoose) setOpenIndex(index);
+                    }}
+                  >
                     <td className="px-2 py-2 font-mono text-paper tabular-nums">{item.quantity}</td>
                     <td className="px-2 py-2">
-                      <CardName name={item.name} imageUri={item.image_uri} />
+                      {canChoose ? (
+                        <button
+                          type="button"
+                          className="group text-left"
+                          aria-haspopup="dialog"
+                          title={`Choose a printing for ${item.name}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setOpenIndex(index);
+                          }}
+                        >
+                          <CardName name={item.name} imageUri={item.image_uri} className="group-hover:text-accent" />
+                        </button>
+                      ) : (
+                        <CardName name={item.name} imageUri={item.image_uri} />
+                      )}
                       {item.match_status !== "matched" ? (
                         <span className="ml-2 rounded bg-warn/15 px-1.5 py-0.5 align-middle text-[10px] uppercase tracking-wide text-warn">
                           {item.match_status}
@@ -69,7 +97,10 @@ export function TriageGrid({ items, excludeBasics, onToggleLock }: TriageGridPro
                         }
                         title={canLock ? "Lock this printing" : "This card has no exact printing to lock"}
                         disabled={!canLock}
-                        onClick={() => onToggleLock(index)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onToggleLock(index);
+                        }}
                         className="inline-flex size-8 items-center justify-center rounded-md border border-line text-paper disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {item.printing_locked ? <Lock aria-hidden="true" size={15} /> : <LockOpen aria-hidden="true" size={15} />}
@@ -82,6 +113,18 @@ export function TriageGrid({ items, excludeBasics, onToggleLock }: TriageGridPro
           </table>
         </div>
       )}
+      {openItem?.oracle_id ? (
+        <PrintingPicker
+          item={openItem}
+          enabledStores={enabledStores}
+          onClose={() => setOpenIndex(null)}
+          onChoose={(next) => {
+            if (openIndex === null) return;
+            onReplaceItem(openIndex, next);
+            setOpenIndex(null);
+          }}
+        />
+      ) : null}
     </section>
   );
 }
