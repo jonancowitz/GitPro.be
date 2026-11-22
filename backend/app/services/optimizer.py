@@ -603,6 +603,8 @@ def mana_pool_lines(response: OptimizeResponse) -> list[LiveCartLine]:
                 quantity=card.quantity,
                 finish=card.finish,
                 condition=card.condition,
+                set_code=card.set_code,
+                collector_number=card.collector_number,
             )
             for card in bucket.cards
         ]

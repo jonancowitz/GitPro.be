@@ -25,9 +25,18 @@ CART_OPTIMIZER_URL = "https://manapool.com/api/v1/buyer/optimizer"
 ADD_DECK_URL = "https://manapool.com/add-deck"
 USER_AGENT = "gitpro.be/1.0"
 LIVE_CACHE_TTL_SECONDS = 600
-LIVE_TIMEOUT_SECONDS = 2.5
+# The optimizer streams better carts over one response. The first covering
+# quote for a 100-card deck arrives after the old 2.5s read timeout, and later
+# gaps are longer than that, so wait long enough for the first quote and
+# return it instead of reading until the solver closes the stream.
+LIVE_TIMEOUT_SECONDS = 8.0
 
 FINISH_TO_ID = {"nonfoil": "NF", "foil": "FO", "etched": "EF"}
+# English paper only. Mana Pool rejects a cart line that omits language_ids.
+LANGUAGE_IDS = ("EN",)
+# Shipping in the quote is for a US destination. lowest_price matches Stage 2.
+OPTIMIZER_MODEL = "lowest_price"
+DESTINATION_COUNTRY = "US"
 TIMEOUT_NOTICE = (
     "Mana Pool's live cart optimizer timed out, so these prices are from the last inventory sync."
 )
@@ -109,6 +118,8 @@ class LiveCartLine:
     quantity: int
     finish: str
     condition: str
+    set_code: str
+    collector_number: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,15 +169,25 @@ def live_cache_key(lines: Sequence[LiveCartLine], min_condition: str) -> str:
         "min_condition": min_condition,
         "lines": [
             {
+                "collector_number": line.collector_number,
                 "condition": line.condition,
                 "finish": line.finish,
                 "name": line.name,
                 "quantity": line.quantity,
                 "scryfall_id": line.scryfall_id,
+                "set_code": line.set_code,
             }
             for line in sorted(
                 lines,
-                key=lambda line: (line.name, line.scryfall_id, line.finish, line.condition, line.quantity),
+                key=lambda line: (
+                    line.name,
+                    line.set_code,
+                    line.collector_number,
+                    line.scryfall_id,
+                    line.finish,
+                    line.condition,
+                    line.quantity,
+                ),
             )
         ],
     }
@@ -175,22 +196,31 @@ def live_cache_key(lines: Sequence[LiveCartLine], min_condition: str) -> str:
 
 
 def build_optimizer_body(lines: Sequence[LiveCartLine], conditions: Sequence[str]) -> dict[str, Any]:
-    grouped: dict[tuple[str, str], int] = {}
+    """Build the buyer-optimizer body.
+
+    A line is identified by set code and collector number. A name alone is
+    rejected, and each line must include language_ids.
+    """
+
+    grouped: dict[tuple[str, str, str, str], int] = {}
     for line in lines:
-        key = (line.name, line.finish)
+        key = (line.name, line.set_code.lower(), line.collector_number, line.finish)
         grouped[key] = grouped.get(key, 0) + line.quantity
     cart = []
-    for name, finish in sorted(grouped):
+    for name, set_code, collector_number, finish in sorted(grouped):
         cart.append(
             {
                 "type": "mtg_single",
                 "name": name,
-                "quantity_requested": grouped[(name, finish)],
+                "set_code": set_code,
+                "collector_number": collector_number,
+                "quantity_requested": grouped[(name, set_code, collector_number, finish)],
                 "finish_ids": [FINISH_TO_ID[finish]],
                 "condition_ids": list(conditions),
+                "language_ids": list(LANGUAGE_IDS),
             }
         )
-    return {"cart": cart}
+    return {"cart": cart, "model": OPTIMIZER_MODEL, "destination_country": DESTINATION_COUNTRY}
 
 
 def parse_optimizer_payload(text: str, *, requested_quantity: int) -> LiveQuote:
@@ -257,23 +287,51 @@ async def fetch_live_quote(
 ) -> LiveQuote:
     headers = {
         "User-Agent": USER_AGENT,
-        "Accept": "application/json",
+        "Accept": "application/x-ndjson, application/json",
         "Content-Type": "application/json",
         "X-ManaPool-Email": email,
         "X-ManaPool-Access-Token": access_token,
     }
     timeout = httpx.Timeout(LIVE_TIMEOUT_SECONDS)
+    requested = sum(line.quantity for line in lines)
+    quote: LiveQuote | None = None
+    last_error: LiveQuoteError | None = None
     try:
-        response = await client.post(
+        async with client.stream(
+            "POST",
             CART_OPTIMIZER_URL,
             json=build_optimizer_body(lines, conditions),
             headers=headers,
             timeout=timeout,
-        )
-        response.raise_for_status()
+        ) as response:
+            if response.status_code == 409:
+                raise LiveQuoteError(PARTIAL_NOTICE)
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise LiveQuoteError(UNAVAILABLE_NOTICE) from exc
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    quote = parse_optimizer_payload(line, requested_quantity=requested)
+                except LiveQuoteError as exc:
+                    last_error = exc
+                    continue
+                break
     except (TimeoutError, httpx.TimeoutException) as exc:
-        raise TimeoutError(TIMEOUT_NOTICE) from exc
-    return parse_optimizer_payload(response.text, requested_quantity=sum(line.quantity for line in lines))
+        if quote is None:
+            if last_error is not None:
+                raise last_error from exc
+            raise TimeoutError(TIMEOUT_NOTICE) from exc
+    except Exception:
+        if quote is None:
+            raise
+    if quote is not None:
+        return quote
+    if last_error is not None:
+        raise last_error
+    raise LiveQuoteError(UNAVAILABLE_NOTICE)
 
 
 async def cached_live_quote(lines: Sequence[LiveCartLine], redis: Any, fetch: Any, min_condition: str) -> LiveQuote:
