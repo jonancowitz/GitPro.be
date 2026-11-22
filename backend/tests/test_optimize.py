@@ -564,6 +564,40 @@ def test_missing_mana_pool_credentials_keep_the_snapshot() -> None:
     assert result.notices == [UNAVAILABLE_NOTICE]
 
 
+def test_live_quote_does_not_compare_a_single_store_with_itself() -> None:
+    snapshot = plan_purchase(
+        [_item(ORACLE, PRINT_A)],
+        [_fact(PRINT_A, ORACLE, "Sol Ring")],
+        [_row("mana_pool", PRINT_A, ORACLE, 300, 2)],
+        [_mp()],
+        package_penalty_cents=0,
+    )
+    assert snapshot.savings.baseline_store_id == "mana_pool"
+    assert snapshot.savings.savings_cents == 0
+
+    async def fetch(_lines: list[LiveCartLine]) -> LiveQuote:
+        return LiveQuote(subtotal_cents=500, shipping_cents=100, package_count=2)
+
+    async def run():
+        return await verify_live_cart(
+            snapshot,
+            [_mp()],
+            redis=_FakeRedis(),
+            min_condition="LP",
+            email="buyer@example.com",
+            access_token="mpat_test",
+            live_fetch=fetch,
+        )
+
+    result = asyncio.run(run())
+    assert result.savings.optimized_total_cents == 600
+    assert result.savings.baseline_total_cents == 600
+    assert result.savings.savings_cents == 0
+    assert result.savings.message == "Same total as buying everything at Mana Pool"
+    assert _bucket(result, "mana_pool").price_source == "live"
+    assert _bucket(result, "mana_pool").subtotal_cents == 500
+
+
 def test_optimizer_payload_uses_the_final_streamed_line() -> None:
     body = "\n".join(
         [
