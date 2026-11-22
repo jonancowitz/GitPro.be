@@ -456,6 +456,51 @@ def test_exact_name_beats_face_and_shared_faces_are_ambiguous() -> None:
     assert specific.oracle_id == str(LEFT_ORACLE)
 
 
+def test_printing_identity_does_not_replace_a_different_card() -> None:
+    trash_id = uuid.UUID("20202020-2020-4020-8020-202020202020")
+    trash_oracle = uuid.UUID("21212121-2121-4121-8121-212121212121")
+    catalog = [
+        *_catalog(),
+        _card(trash_id, trash_oracle, "Trash for Treasure", "2xm", "148"),
+    ]
+
+    bolt = resolve_items(
+        [_line("Lightning Bolt", set_code="2XM", collector_number="148")],
+        catalog,
+    )[0]
+    assert bolt.match_status == "matched"
+    assert bolt.name == "Lightning Bolt"
+    assert bolt.oracle_id == str(BOLT_ORACLE)
+    assert bolt.printing_locked is False
+    assert bolt.collector_number != "148"
+
+    still_locked = resolve_items(
+        [_line("Lightning Bolt", set_code="2xm", collector_number="1")],
+        catalog,
+    )[0]
+    assert still_locked.match_status == "matched"
+    assert still_locked.name == "Lightning Bolt"
+    assert still_locked.printing_locked is True
+    assert still_locked.collector_number == "1"
+
+    face = resolve_items(
+        [_line("Insectile Aberration", set_code="soi", collector_number="51")],
+        catalog,
+    )[0]
+    assert face.match_status == "matched"
+    assert face.name == DELVER_NAME
+    assert face.printing_locked is True
+    assert face.collector_number == "51"
+
+    unknown = resolve_items(
+        [_line("Not a Real Card", set_code="2xm", collector_number="148")],
+        catalog,
+    )[0]
+    assert unknown.match_status == "unmatched"
+    assert unknown.name == "Not a Real Card"
+    assert unknown.scryfall_id is None
+
+
 def test_unmatched_basic_lands_and_printing_metadata() -> None:
     catalog = _catalog()
     missing = resolve_items([_line("Not a Real Card", set_code="ltr", collector_number="1")], catalog)[0]

@@ -531,6 +531,10 @@ def _unmatched(card) -> UnmatchedCard:
 def refresh_savings(response: OptimizeResponse) -> OptimizeResponse:
     optimized = _cash_total(response.buckets)
     baseline_total = response.savings.baseline_total_cents
+    # A live quote replaces the snapshot total of a cart that is already the
+    # single-store baseline. That purchase is not a savings against itself.
+    if _priced_as_baseline_store(response) and baseline_total is not None:
+        baseline_total = optimized
     savings = None if baseline_total is None else baseline_total - optimized
     message = None
     if savings is not None and response.savings.baseline_store_name is not None:
@@ -540,12 +544,17 @@ def refresh_savings(response: OptimizeResponse) -> OptimizeResponse:
             "savings": response.savings.model_copy(
                 update={
                     "optimized_total_cents": optimized,
+                    "baseline_total_cents": baseline_total,
                     "savings_cents": savings,
                     "message": message,
                 }
             )
         }
     )
+
+
+def _priced_as_baseline_store(response: OptimizeResponse) -> bool:
+    return len(response.buckets) == 1 and response.buckets[0].store_id == response.savings.baseline_store_id
 
 
 def with_notice(response: OptimizeResponse, notice: str) -> OptimizeResponse:

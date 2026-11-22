@@ -462,11 +462,12 @@ def _resolve_item(line: ParsedLine, cards: Sequence[CatalogCard]) -> ParsedDeckI
             for card in cards
             if card.set_code == wanted_set and card.collector_number.casefold() == wanted_collector
         ]
-        oracle_ids = {card.oracle_id for card in printing_matches}
+        named_matches = [card for card in printing_matches if _match_kind(line.name, card.name) != "none"]
+        oracle_ids = {card.oracle_id for card in named_matches}
         if len(oracle_ids) > 1:
             return _unresolved(line, "ambiguous")
         if len(oracle_ids) == 1:
-            return _matched(line, _prefer_display(printing_matches), cards, locked=True)
+            return _matched(line, _prefer_display(named_matches), cards, locked=True)
 
     matched_oracles = _matching_oracles(line.name, cards)
     if len(matched_oracles) > 1:
