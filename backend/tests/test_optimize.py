@@ -24,12 +24,14 @@ from app.services.optimizer import plan_purchase, verify_live_cart
 from app.services.optimizer import optimize_deck
 from app.services.stores.mana_pool import (
     LIVE_CACHE_TTL_SECONDS,
+    LIVE_TIMEOUT_SECONDS,
     PARTIAL_NOTICE,
     TIMEOUT_NOTICE,
     UNAVAILABLE_NOTICE,
     LiveCartLine,
     LiveQuote,
     LiveQuoteError,
+    build_optimizer_body,
     live_cache_key,
     parse_optimizer_payload,
 )
@@ -590,10 +592,56 @@ def test_optimizer_payload_uses_the_final_streamed_line() -> None:
     assert caught.value.notice == PARTIAL_NOTICE
 
 
+def test_optimizer_body_keeps_each_printing() -> None:
+    body = build_optimizer_body(
+        [
+            LiveCartLine("Sol Ring", str(PRINT_A), 1, "nonfoil", "NM", "TRC", "499"),
+            LiveCartLine("Sol Ring", str(PRINT_B), 2, "foil", "NM", "who", "245"),
+        ],
+        ("NM", "LP"),
+    )
+    assert [(item["set_code"], item["collector_number"], item["quantity_requested"], item["finish_ids"]) for item in body["cart"]] == [
+        ("trc", "499", 1, ["NF"]),
+        ("who", "245", 2, ["FO"]),
+    ]
+    assert all(item["language_ids"] == ["EN"] for item in body["cart"])
+
+
+class _Stream:
+    def __init__(self, response: httpx.Response) -> None:
+        self._response = response
+        self.status_code = response.status_code
+
+    async def __aenter__(self) -> _Stream:
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+    def raise_for_status(self) -> httpx.Response:
+        return self._response.raise_for_status()
+
+    async def aiter_lines(self):
+        text = self._response.text
+        for line in text.splitlines() or [text]:
+            yield line
+
+
+def test_uncovered_live_cart_uses_the_partial_notice() -> None:
+    class _Client:
+        def stream(self, method: str, url: str, *, json: dict, headers: dict, timeout: httpx.Timeout) -> _Stream:
+            request = httpx.Request("POST", url)
+            return _Stream(httpx.Response(409, json={"status": 409}, request=request))
+
+    with pytest.raises(LiveQuoteError) as caught:
+        asyncio.run(_fetch(_Client()))
+    assert caught.value.notice == PARTIAL_NOTICE
+
+
 def test_live_cache_key_changes_with_finish_and_condition() -> None:
-    nonfoil = live_cache_key([LiveCartLine("Sol Ring", str(PRINT_A), 1, "nonfoil", "NM")], "LP")
-    foil = live_cache_key([LiveCartLine("Sol Ring", str(PRINT_A), 1, "foil", "NM")], "LP")
-    played = live_cache_key([LiveCartLine("Sol Ring", str(PRINT_A), 1, "nonfoil", "LP")], "LP")
+    nonfoil = live_cache_key([LiveCartLine("Sol Ring", str(PRINT_A), 1, "nonfoil", "NM", "ltc", "284")], "LP")
+    foil = live_cache_key([LiveCartLine("Sol Ring", str(PRINT_A), 1, "foil", "NM", "ltc", "284")], "LP")
+    played = live_cache_key([LiveCartLine("Sol Ring", str(PRINT_A), 1, "nonfoil", "LP", "ltc", "284")], "LP")
     assert len({nonfoil, foil, played}) == 3
 
 
@@ -832,13 +880,13 @@ def test_fetch_live_quote_posts_the_cart_optimizer() -> None:
     captured: dict = {}
 
     class _Client:
-        async def post(self, url: str, json: dict, headers: dict, timeout: httpx.Timeout) -> httpx.Response:
+        def stream(self, method: str, url: str, *, json: dict, headers: dict, timeout: httpx.Timeout):
             captured["url"] = url
             captured["json"] = json
             captured["headers"] = headers
             captured["timeout"] = timeout
             request = httpx.Request("POST", url)
-            return httpx.Response(
+            response = httpx.Response(
                 200,
                 json={
                     "totals": {"subtotal_cents": 42, "shipping_cents": 7, "seller_count": 1},
@@ -846,6 +894,7 @@ def test_fetch_live_quote_posts_the_cart_optimizer() -> None:
                 },
                 request=request,
             )
+            return _Stream(response)
 
     async def run() -> LiveQuote:
         return await _fetch(_Client())
@@ -853,19 +902,26 @@ def test_fetch_live_quote_posts_the_cart_optimizer() -> None:
     quote = asyncio.run(run())
     assert quote.subtotal_cents == 42
     assert captured["url"] == "https://manapool.com/api/v1/buyer/optimizer"
-    assert captured["json"]["cart"][0]["name"] == "Sol Ring"
-    assert captured["json"]["cart"][0]["finish_ids"] == ["NF"]
-    assert captured["json"]["cart"][0]["condition_ids"] == ["NM", "LP"]
+    item = captured["json"]["cart"][0]
+    assert item["name"] == "Sol Ring"
+    assert item["set_code"] == "ltc"
+    assert item["collector_number"] == "284"
+    assert item["finish_ids"] == ["NF"]
+    assert item["condition_ids"] == ["NM", "LP"]
+    assert item["language_ids"] == ["EN"]
+    assert captured["json"]["model"] == "lowest_price"
+    assert captured["json"]["destination_country"] == "US"
+    assert captured["headers"]["Accept"] == "application/x-ndjson, application/json"
     assert captured["headers"]["X-ManaPool-Email"] == "buyer@example.com"
     assert captured["headers"]["X-ManaPool-Access-Token"] == "mpat_test"
-    assert captured["timeout"].read == 2.5
+    assert captured["timeout"].read == LIVE_TIMEOUT_SECONDS
 
 
 async def _fetch(client) -> LiveQuote:
     from app.services.stores.mana_pool import fetch_live_quote
 
     return await fetch_live_quote(
-        [LiveCartLine("Sol Ring", str(PRINT_A), 1, "nonfoil", "NM")],
+        [LiveCartLine("Sol Ring", str(PRINT_A), 1, "nonfoil", "NM", "ltc", "284")],
         client,
         email="buyer@example.com",
         access_token="mpat_test",
