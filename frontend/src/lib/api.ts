@@ -1,4 +1,4 @@
-import type { OptimizeRequest, OptimizeResponse, ParsedDeckItem } from "@/types/deck";
+import type { OptimizeRequest, OptimizeResponse, ParsedDeckItem, PrintingsResponse } from "@/types/deck";
 
 const DEFAULT_API_BASE_URL = "http://localhost:8000";
 
@@ -49,6 +49,16 @@ export async function parseDeckFile(file: File): Promise<ParsedDeckItem[]> {
 
 export async function optimizeDeck(request: OptimizeRequest): Promise<OptimizeResponse> {
   return postJson("/api/v1/optimize", request);
+}
+
+export async function fetchPrintings(oracleId: string, stores: readonly string[]): Promise<PrintingsResponse> {
+  const params = new URLSearchParams({ stores: stores.join(",") });
+  const response = await fetch(
+    `${apiBaseUrl()}/api/v1/cards/${encodeURIComponent(oracleId)}/printings?${params}`,
+    { headers: { Accept: "application/json" } },
+  );
+  if (!response.ok) throw await errorFromResponse(response);
+  return (await response.json()) as PrintingsResponse;
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {

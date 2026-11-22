@@ -7,7 +7,15 @@ interface PreviewPoint {
   top: number;
 }
 
-export function CardName({ name, imageUri }: { name: string; imageUri: string | null }) {
+export function CardName({
+  name,
+  imageUri,
+  className = "",
+}: {
+  name: string;
+  imageUri: string | null;
+  className?: string;
+}) {
   const [preview, setPreview] = useState<PreviewPoint | null>(null);
 
   function show(clientX: number, clientY: number) {
@@ -18,7 +26,7 @@ export function CardName({ name, imageUri }: { name: string; imageUri: string | 
   return (
     <>
       <span
-        className="font-medium text-paper"
+        className={`font-medium text-paper ${className}`}
         tabIndex={imageUri ? 0 : undefined}
         onMouseEnter={(event) => show(event.clientX, event.clientY)}
         onMouseMove={(event) => show(event.clientX, event.clientY)}
